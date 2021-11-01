@@ -103,10 +103,19 @@ Double_t FD::FitOneBin(Int_t ptBin, TString outFile, Double_t *outFracs) {
     frame->Draw();
     can->Print(outFile.Data());
   };
-  if(!fWithinDCAMC) {printf("fWithinDCAMC not defined, will not return a value!\n"); return 0; };
-  Double_t primV = fWithinDCAMC->GetBinContent(ptBin,1);//l_temps[0]->Integral();//
-  Double_t secwV = fWithinDCAMC->GetBinContent(ptBin,2);//l_temps[1]->Integral();//
-  Double_t secmV = fWithinDCAMC->GetBinContent(ptBin,3);//l_temps[2]->Integral();//
+  Double_t primV=0;
+  Double_t secwV=0;
+  Double_t secmV=0;
+  if(fWithinDCAMC && fWithinDCAMC->GetEntries()) {
+    primV = fWithinDCAMC->GetBinContent(ptBin,1);//l_temps[0]->Integral();//
+    secwV = fWithinDCAMC->GetBinContent(ptBin,2);//l_temps[1]->Integral();//
+    secmV = fWithinDCAMC->GetBinContent(ptBin,3);//l_temps[2]->Integral();//
+  } else {
+    printf("fWithinDCAMC not defined or is empty. Will use the full integral of DCAxy distributions instead\n");
+    primV = l_temps[0]->Integral();
+    secwV = l_temps[1]->Integral();
+    secmV = l_temps[2]->Integral();
+  }
   delete [] l_temps;
   delete l_signal;
   primV*=Aprim.getVal();
