@@ -37,36 +37,44 @@ TH1 **FD::getMCProjections(Int_t PtBinNo) {
     fDCAMC->GetYaxis()->SetRange(i+1,i+1);
     hRet[i] = (TH1*)fDCAMC->Project3D("z")->Clone(Form("Proj_%i",i));
     hRet[i]->SetDirectory(0);
+    hRet[i] = rebinDCA(hRet[i]);
     Integerize(hRet[i]);
+    // NormalizeByBinSize(hRet[i]);
   }
   fDCAMC->GetXaxis()->UnZoom();
   fDCAMC->GetYaxis()->UnZoom();
   return hRet;
 };
-TH1 *FD::getDataProjection(Int_t PtBinNo) {
+TH1 *FD::getDataProjection(Int_t PtBinNo, Int_t centBin) {
   if(!fDCAData) {printf("MC template not set!\n"); return 0; };
   TH1 *hRet=0;
   fDCAData->GetXaxis()->SetRange(PtBinNo,PtBinNo);
-  fDCAData->GetYaxis()->SetRange(1,1);
+  if(centBin) fDCAData->GetYaxis()->SetRange(centBin,centBin);
+  // fDCAData->GetYaxis()->SetRange(1,1);
   hRet = (TH1*)fDCAData->Project3D("z")->Clone("ProjData");
+  // hRet = (TH1*)fDCAData->ProjectionY("ProjData",PtBinNo,PtBinNo);
+  hRet = rebinDCA(hRet);
+  Integerize(hRet);
   hRet->SetDirectory(0);
   fDCAData->GetXaxis()->UnZoom();
   fDCAData->GetYaxis()->UnZoom();
+  // NormalizeByBinSize(hRet);
   return hRet;
 };
 void FD::Integerize(TH1 *inh) {
   for(Int_t i=1;i<=inh->GetNbinsX();i++) {
     Double_t bconp = inh->GetBinContent(i);
+    if(bconp==0) continue;
     Double_t bcon = TMath::Floor(bconp);
     inh->SetBinContent(i,bcon);
     inh->SetBinError(i,TMath::Sqrt(bcon));
   }
 }
-Double_t FD::FitOneBin(Int_t ptBin, TString outFile, Double_t *outFracs) {
-  printf("Fitting bin %i\n\n\n\n\n\n\n\n\n",ptBin);
-  RooRealVar x("x", "x", -3, 3);
-  TH1 *l_signal = getDataProjection(ptBin);
+Double_t FD::FitOneBin(Int_t ptBin, TString outFile, Double_t *outFracs, Int_t centBin) {
+  // printf("Fitting bin %i\n\n\n\n\n\n\n\n\n",ptBin);
+  TH1 *l_signal = getDataProjection(ptBin,centBin);
   TH1 **l_temps = getMCProjections(ptBin);
+  RooRealVar x("x", "x", -3,3);//-3, 3);//-3,3);
 
   RooDataHist dsig("dsig", "dsig", x, Import(*l_signal));
   RooDataHist mcprim("mcprim", "mcprim", x, Import(*l_temps[0]));
@@ -77,17 +85,17 @@ Double_t FD::FitOneBin(Int_t ptBin, TString outFile, Double_t *outFracs) {
   RooHistFunc f_sec("f_sec","f_sec",x,mcsec);
   RooHistFunc f_mat("f_mat","f_mat",x,mcmat);
 
-  RooRealVar Aprim("Aprim","Aprim",0.7,0.0,100);
-  RooRealVar Asec("Asec","Asec",0.2,0.0,100);
-  RooRealVar Amat("Amat","Amat",0.1,0,100);
+  RooRealVar Aprim("Aprim","Aprim",100,0.,500);
+  RooRealVar Asec("Asec","Asec",100,0.,500);
+  RooRealVar Amat("Amat","Amat",100,0.,500);
 
   RooRealSumPdf model0("model0","model0",
      RooArgList(f_prim,f_sec,f_mat),
      RooArgList(Aprim, Asec, Amat),
      true);
 
-  auto result0 = model0.fitTo(dsig, PrintLevel(0), Save());
-
+  RooFitResult* result0=0;
+    result0 = model0.fitTo(dsig, PrintLevel(0), Save());
   if(!outFile.IsNull()) {
     TCanvas* can = new TCanvas("can", "", 600, 600);
 
@@ -100,6 +108,7 @@ Double_t FD::FitOneBin(Int_t ptBin, TString outFile, Double_t *outFracs) {
     model0.plotOn(frame, LineColor(kGreen+2));
     model0.plotOn(frame, Components(f_prim), LineColor(kAzure));
     model0.plotOn(frame, Components(f_sec), LineColor(kRed));
+    model0.plotOn(frame, Components(f_mat), LineColor(kOrange+2));
     frame->Draw();
     can->Print(outFile.Data());
   };
@@ -121,11 +130,12 @@ Double_t FD::FitOneBin(Int_t ptBin, TString outFile, Double_t *outFracs) {
   primV*=Aprim.getVal();
   secwV*=Asec.getVal();
   secmV*=Amat.getVal();
+  // secmV=0;
   if(outFracs) { outFracs[0] = Aprim.getVal(); outFracs[1] = Asec.getVal(); outFracs[2] = Amat.getVal(); };
   return primV/(primV+secwV+secmV);
 }
-TH1 *FD::PerformFit(Double_t ptMin, Double_t ptMax, TString outFile, TH1 **outHists) {
-  TH1 *retH = fDCAData->Project3D("x");
+TH1 *FD::PerformFit(Double_t ptMin, Double_t ptMax, TString outFile, TH1 **outHists, Int_t centBin) {
+  TH1 *retH = fDCAData->ProjectionX("rh");//Project3D("x");
   retH->SetName("PrimOverAll");
   retH->Reset();
   if(outHists) {
@@ -135,9 +145,23 @@ TH1 *FD::PerformFit(Double_t ptMin, Double_t ptMax, TString outFile, TH1 **outHi
   }
   Double_t *outFracs = outHists?(new Double_t[3]):0;
   for(Int_t i=retH->FindBin(ptMin+(1e-6)); i<=retH->FindBin(ptMax-1e-6); i++) {
-    Double_t nval = FitOneBin(i,outFile,outFracs);
+    Double_t nval = FitOneBin(i,outFile,outFracs,centBin);
     retH->SetBinContent(i,nval);
     if(outHists) for(Int_t j=0;j<3;j++) outHists[j]->SetBinContent(i,outFracs[j]);
   }
   return retH;
+}
+void FD::NormalizeByBinSize(TH1 *inh) {
+  for(Int_t i=1;i<=inh->GetNbinsX();i++) {
+    if(inh->GetBinContent(i)==0) continue;
+    inh->SetBinContent(i,inh->GetBinContent(i)/inh->GetBinWidth(i));
+    if(inh->GetBinError(i)==0) continue;
+    inh->SetBinError(i,inh->GetBinError(i)/inh->GetBinWidth(i));
+  }
+}
+TH1 *FD::rebinDCA(TH1 *inh) {
+  // return inh;
+  Double_t binsDCA[61] = {-3.00, -2.90, -2.80, -2.70, -2.60, -2.50, -2.40, -2.30, -2.20, -2.10, -2.00, -1.90, -1.80, -1.70, -1.60, -1.50, -1.40, -1.30, -1.20, -1.10, -1.00, -0.90, -0.80, -0.70, -0.60, -0.50, -0.40, -0.30, -0.20, -0.10, 0.00, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.00, 1.10, 1.20, 1.30, 1.40, 1.50, 1.60, 1.70, 1.80, 1.90, 2.00, 2.10, 2.20, 2.30, 2.40, 2.50, 2.60, 2.70, 2.80, 2.90, 3.00};
+  Int_t NbinsDCA = 60;
+  return inh->Rebin(NbinsDCA,Form("%s_Rebinned",inh->GetName()),binsDCA);
 }

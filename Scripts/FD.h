@@ -25,10 +25,12 @@ class FD:public TNamed {
     ~FD();
     FD(TH3D *DCAdata, TH2D *withinDCAdata, TH3D *fDCAMC, TH2D *withinDCAMC);
     TH1 **getMCProjections(Int_t PtBinNo);
-    TH1 *getDataProjection(Int_t PtBinNo);
+    TH1 *getDataProjection(Int_t PtBinNo, Int_t centBin);
     void Initialize(TH3D *DCAData, TH2D *withinDCAData, TH3D *fDCAMC, TH2D *withinDCAMC);
-    Double_t FitOneBin(Int_t ptBin, TString outFile="", Double_t *outFracs=0);
-    TH1 *PerformFit(Double_t ptMin=0.2, Double_t ptMax=5, TString outFile="", TH1 **outFracs=0);
+    Double_t FitOneBin(Int_t ptBin, TString outFile="", Double_t *outFracs=0, Int_t centBin=0);
+    TH1 *PerformFit(Double_t ptMin=0.2, Double_t ptMax=5, TString outFile="", TH1 **outFracs=0, Int_t centBin=0);
+    void NormalizeByBinSize(TH1 *inh);
+    TH1 *rebinDCA(TH1*);
     ClassDef(FD, 1);
   private:
     TH3D *fDCAData;

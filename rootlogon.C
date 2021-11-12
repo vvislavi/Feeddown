@@ -23,4 +23,8 @@
   // for(Int_t i=0;i<3;i++) mcar->Add(hall[i]);
   // gROOT->ProcessLine(".L Scripts/FeedDown.cxx+");
   // FeedDown *fd = new FeedDown(hdt,hmc,hwdc);
+
+  // TFile *tf = new TFile("~/AliceData/pPb_EffForYuko/tempdt.root","READ");
+  // TH2D *h2 = dcaxydata;
+  // TH3D *h3 = DCAxy_withChi2;
 }

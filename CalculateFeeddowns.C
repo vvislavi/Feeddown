@@ -9,37 +9,110 @@
 #include "TList.h"
 #include "Scripts/CommonFunctions.C"
 #include "TF1.h"
-Double_t g_xmax=3;
-TH1 *CalculateOneFeeddown(TList *dataList, TList *mcList, Bool_t quitPrematurely=kFALSE) {
-  TH3D *hmc = (TH3D*)mcList->FindObject("DCAxy_noChi2");
-  TH2D *hwdc = (TH2D*)mcList->FindObject("WithinDCA_withChi2");
-  TH3D *hdt = (TH3D*)dataList->FindObject("DCAxy_noChi2");
-  FD *fd = new FD(hdt,0,hmc,hwdc);
+#include "AliEffFDContainer.h"
+TList *getSomeList(TString infi) {
+  TFile *tf = getFile(infi);
+  AliEffFDContainer *fd = (AliEffFDContainer*)getObj(tf,"Eff_YS_FB32_EffAndFDEtaM0806");
+  return fd->fOutList;
+}
+AliEffFDContainer *getSomeEF(TString objname, TString infi) {
+  TFile *tf = getFile(infi);
+  AliEffFDContainer *fd = (AliEffFDContainer*)getObj(tf,objname);
+  tf->Close();
+  return fd;
+}
+TString g_mcFile   = "~/AliceData/pPb_Efficiencies_All/LHC20f11c.root";//DataYukoMerged.root";
+TString g_dataFile = "~/AliceData/pPb_Efficiencies_All/LHC16_pass1/merged.root";//MCYukoMerged.root";
+TString g_objName;//  = "Eff_YS_FB32_EffAndFDEtaM0806";
+//Name collections
+TString etaPFs[]  = {"0806","0604","0402","0200","0002","0204","0406","0608"};
+TString namePFs[] = {"VV_FB96","YS_FB32","ZZ_FB96"};
+void ConfigObjName(TString lNamePF, TString lEtaPF) {
+  g_objName = Form("Eff_%s_EffAndFDEtaM%s",lNamePF.Data(),lEtaPF.Data());
+};
+
+AliEffFDContainer *getDataList(TString objName=g_objName, TString infi=g_dataFile) { return getSomeEF(objName,infi); };
+AliEffFDContainer *getMCList(TString objName=g_objName, TString infi=g_mcFile) { return getSomeEF(objName,infi); };
+AliEffFDContainer *efdt, *efmc;
+void Init() {
+  efdt = getDataList(g_objName,g_dataFile);
+  efmc = getMCList(g_objName,g_mcFile);
+};
+Double_t g_xmax=2.5;
+FD *fd;
+TH1 *CalculateOneFeeddown(AliEffFDContainer *dtef, AliEffFDContainer *mcef, Bool_t quitPrematurely=kFALSE, Bool_t wChi=kFALSE, Int_t centBin=0) {
+  TString wChiFlag = wChi?"with":"no";
+  TH3D *hmc = dynamic_cast<TH3D*>(mcef->fetchObj("DCAxy_"+wChiFlag+"Chi2"));
+  TH3D *hdt = dynamic_cast<TH3D*>(dtef->fetchObj("DCAxy_"+wChiFlag+"Chi2"));
+  TH2D *hwdc = dynamic_cast<TH2D*>(mcef->fetchObj("WithinDCA_withChi2"));
+  fd = new FD(hdt,0,hmc,hwdc);
   if(quitPrematurely) return 0;
-  TH1 *reth = fd->PerformFit(0.2,g_xmax);
+  TH1 *reth = fd->PerformFit(0.2,g_xmax,"",0,centBin);
   delete fd;
-  // delete hmc;
-  // delete hwdc;
-  // delete hdt;
   Double_t lval = reth->GetBinContent(reth->FindBin(g_xmax-(1e-6)));
   for(Int_t i=reth->FindBin(g_xmax);i<=reth->FindBin(3.0 - 1e-6);i++) reth->SetBinContent(i,lval);
-  // if(g_xmax<3) {
-  //   Double_t yval=0;
-  //   Int_t i=reth->FindBin(3- (1e-6));
-  //   do {i--; yval=reth->GetBinContent(i); } while((i>1) && (yval=0));
-  //   for(Int_t j=i;j<=reth->FindBin(3- (1e-6)); j++) reth->SetBinContent(j,yval);
-  // }
   return reth;
 };
-TH1 *CalculateEfficiency(TList *mcList) {
-  TH2D *hrec = (TH2D*)mcList->FindObject("Spectra_ch");
-  TH2D *hgen = (TH2D*)mcList->FindObject("Spectra_ch_Gen");
-  TH1 *reth = hrec->ProjectionX("effres");
-  TH1 *den  = hgen->ProjectionX("hgen");
+TH2 *CalculateOneFeeddown2D(AliEffFDContainer *dtef, AliEffFDContainer *mcef) {
+  TH1 *htemp = CalculateOneFeeddown(dtef,mcef,kTRUE,kFALSE,0);
+  TH3D *hdt = dynamic_cast<TH3D*>(dtef->fetchObj("DCAxy_noChi2"));
+  TH2D *rh = (TH2D*)hdt->Project3D("yx");
+  rh->SetName("FDvsCent");
+  rh->Reset();
+  for(Int_t i=1;i<=rh->GetNbinsY();i++) {
+    TH1 *htemp = CalculateOneFeeddown(efdt,efmc,kFALSE,kFALSE,i);
+    for(Int_t j=1;j<=htemp->GetNbinsX();j++) {
+      if(!htemp->GetBinContent(j)) continue;
+      rh->SetBinContent(j,i,htemp->GetBinContent(j));
+    };
+  };
+  return rh;
+}
+TH1 *CalculateEfficiency(AliEffFDContainer *mcef, Int_t centBin=0) {
+  TH2D *hrec = dynamic_cast<TH2D*>(mcef->fetchObj("nChRec_Weighted"));
+  TH2D *hgen = dynamic_cast<TH2D*>(mcef->fetchObj("nChGen_Weighted"));
+  Int_t cLow = centBin?centBin:1;
+  Int_t cHigh = centBin?centBin:hrec->GetNbinsY();
+  TH1 *reth = hrec->ProjectionX("effres",cLow,cHigh);
+  TH1 *den  = hgen->ProjectionX("hgen",cLow,cHigh);
   reth->Divide(den);
   delete den;
   return reth;
 };
+TH2 *CalculateEfficiency2D(AliEffFDContainer *mcef) {
+  TH2D *hrec = dynamic_cast<TH2D*>(mcef->fetchObj("nChRec_Weighted"));
+  TH2D *hgen = dynamic_cast<TH2D*>(mcef->fetchObj("nChGen_Weighted"));
+  hrec = (TH2D*)hrec->Clone("eff2D");
+  hrec->Divide(hgen);
+  return hrec;
+};
+void WriteOneSet(TString outFile, TString outName) {
+  Init();
+  TH2 *fd2D = CalculateOneFeeddown2D(efdt,efmc);
+  TH1 *fdMB = CalculateOneFeeddown(efdt,efmc,kFALSE,kFALSE,0);
+  TH2 *ef2D = CalculateEfficiency2D(efmc);
+  TH1 *efMB = CalculateEfficiency(efmc,0);
+  fd2D->SetName(Form("FDvsCent_%s",outName.Data()));
+  fdMB->SetName(Form("FD_MB_%s",outName.Data()));
+  ef2D->SetName(Form("EFvsCent_%s",outName.Data()));
+  efMB->SetName(Form("EF_MB_%s",outName.Data()));
+  delete efdt;
+  delete efmc;
+  // delete fd;
+  TFile *tf = new TFile(outFile.Data(),"UPDATE");
+  fd2D->Write(0,TObject::kOverwrite);
+  fdMB->Write(0,TObject::kOverwrite);
+  ef2D->Write(0,TObject::kOverwrite);
+  efMB->Write(0,TObject::kOverwrite);
+  tf->Close();
+};
+void WriteOneConfig(TString namePF) {
+  for(Int_t i=0;i<8;i++) {
+    ConfigObjName(namePF,etaPFs[i]);
+    WriteOneSet(Form("CombinedOutput/%s.root",namePF.Data()),Form("%s%s",i<4?"EtaNeg":"EtaPos",etaPFs[i].Data()));
+  }
+}
+
 void ModifyList(TList *inlist) {
   TH3 *hwchi = (TH3*)inlist->FindObject("DCAxy_withChi2");
   TH2 *hwithinDCA = (TH2*)hwchi->Project3D("yx");
@@ -61,7 +134,7 @@ TF1 *getIncreasingFunction(Double_t increment) {
 };
 // TList *dtList;
 // TList *mcList;
-void CalculateAllFeeddowns(TString dataFileName, TString mcFileName, TString outputFileName) {
+/*void CalculateAllFeeddowns(TString dataFileName, TString mcFileName, TString outputFileName) {
   TFile *dtFile = getFile(dataFileName);
   TFile *mcFile = getFile(mcFileName);
   TList *lok = dtFile->GetListOfKeys();
@@ -71,6 +144,7 @@ void CalculateAllFeeddowns(TString dataFileName, TString mcFileName, TString out
   TList *effList = new TList();
   effList->SetName("EffAndFD");
   for(Int_t i=0;i<lok->GetEntries();i++) {
+    if(i>0) continue;
     if(i==6 || i==14 || i==15 || i==16 || i==17) g_xmax=2.7;
     else if(i==18) g_xmax = 2.4;
     else g_xmax=3.0;
@@ -92,8 +166,8 @@ void CalculateAllFeeddowns(TString dataFileName, TString mcFileName, TString out
   TFile *outFile = getFile(outputFileName,"RECREATE");
   outList->Write("FDList",TObject::kSingleKey);
   outFile->Close();
-}
-void ReplaceAxis(TH1 **target, TH1 *source) {
+}*/
+/*void ReplaceAxis(TH1 **target, TH1 *source) {
   TH1 *trg = *target;
   TH1 *reth = (TH1*)source->Clone("temph");
   reth->Reset();
@@ -108,8 +182,8 @@ void ReplaceAxis(TH1 **target, TH1 *source) {
   delete trg;
   reth->SetName(nameBU.Data());
   (*target) = reth;
-}
-void CalculateAllEfficiencies(TString fdFileName, TString mcFileName, TString outputFileName) {
+}*/
+/*void CalculateAllEfficiencies(TString fdFileName, TString mcFileName, TString outputFileName) {
   TFile *fdFile = getFile(fdFileName);
   TFile *mcFile = getFile(mcFileName);
   TList *fdList = (TList*)getObj(fdFile,"FDList");
@@ -150,4 +224,4 @@ void CalculateAllEfficiencies(TString fdFileName, TString mcFileName, TString ou
   TFile *outFile = getFile(outputFileName,"RECREATE");
   effList->Write("EffAndFD",TObject::kSingleKey);
   outFile->Close();
-}
+}*/
